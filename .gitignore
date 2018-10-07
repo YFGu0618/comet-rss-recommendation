@@ -127,3 +127,6 @@ dmypy.json
 
 # VisualStudioCode gitignore
 .vscode/*
+
+# Misc.
+data/*.xml
