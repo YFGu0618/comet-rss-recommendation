@@ -8,8 +8,6 @@ import getopt
 
 DATA_DIR = 'data'
 RSS_BASE = 'http://halley.exp.sis.pitt.edu/comet/utils/_rss.jsp'
-REC_START_DATE = '2008-01'
-REC_END_DATE = '2018-12'
 
 
 class YMItr:
@@ -121,8 +119,10 @@ def vectorize(docs, algo='tf-idf'):
 
 
 def generate_vector(algo='tf-idf'):
-    from lxml import etree
+    import json
     import re
+    from lxml import etree
+
     parser = etree.XMLParser(encoding='cp1252', recover=True)
     talks = []
     directory = os.path.join(os.path.dirname(
@@ -141,7 +141,7 @@ def generate_vector(algo='tf-idf'):
                         talk['id'] = talk_id
                     if child.tag == 'title':
                         talk['title'] = child.text
-                    elif child.tag == r'description':
+                    elif child.tag == 'description':
                         talk['description'] = child.text
                 if all(k in talk for k in ('id', 'title', 'description')):
                     talks.append(talk)
@@ -150,20 +150,116 @@ def generate_vector(algo='tf-idf'):
             continue
     if len(talks) < 1:
         print("> Data not available! Try downloading data first.")
+        sys.exit(2)
     vectors = vectorize(talks, algo)
     if vectors:
         vec_path = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), 'vec.{}'.format(algo))
+            os.path.abspath(__file__)), '{}.vec'.format(algo))
         with open(vec_path, 'w', encoding='utf-8') as f:
             for talk_id, vector in vectors.items():
-                f.write("{}, {}\n".format(talk_id, vector))
+                f.write("{}\t{}\n".format(talk_id, json.dumps(vector)))
             print("> Total {} talks vectorized. See <{}> for more details.".format(
-                len(vectors), 'vec.{}'.format(algo)))
+                len(vectors), '{}.vec'.format(algo)))
+
+
+def sim_score(vec1, vec2, algo='cosine'):
+    import math
+    dims = list(vec1.keys()) + list(vec2.keys())
+    if algo == 'cosine':
+        sum_ab = 0
+        sum_aa = 0
+        sum_bb = 0
+        for dim in dims:
+            a = vec1[dim] if dim in vec1 else 0
+            b = vec2[dim] if dim in vec2 else 0
+            sum_ab += a * b
+            sum_aa += a * a
+            sum_bb += b * b
+        return sum_ab / (math.sqrt(sum_aa) * math.sqrt(sum_bb))
+    elif algo == 'euclidean':
+        sum_sq = 0
+        for dim in dims:
+            a = vec1[dim] if dim in vec1 else 0
+            b = vec2[dim] if dim in vec2 else 0
+            sum_sq += (a - b) ** 2
+        return math.sqrt(sum_sq)
+    elif algo == 'manhattan':
+        sum_dist = 0
+        for dim in dims:
+            a = vec1[dim] if dim in vec1 else 0
+            b = vec2[dim] if dim in vec2 else 0
+            sum_dist += abs(a - b)
+        return sum_dist
+    elif algo == 'jaccard':
+        intersect = [dim for dim in vec1.keys() if dim in vec2.keys()]
+        return len(intersect) / len(dims)
+    else:
+        print("> Invalid algorithm! Please use one of the following:")
+        print(">   cosine")
+        print(">   euclidean")
+        print(">   manhattan")
+        print(">   jaccard")
+        return None
 
 
 def get_recommend(user, algo='cosine'):
-    # TODO: Implement recommendation algorithms
-    pass
+    import json
+    import nltk
+    import string
+    import urllib3
+    from lxml import etree
+    from nltk.tokenize import word_tokenize
+    from nltk.corpus import stopwords
+    from nltk.stem import PorterStemmer
+    # Ensure data used by nltk is available
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        nltk.download('punkt')
+    try:
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
+        nltk.download('stopwords')
+
+    stop = stopwords.words('english') + list(string.punctuation)
+    ps = PorterStemmer()
+    # Download user bookmarked talks
+    http = urllib3.PoolManager()
+    r = http.request('GET', RSS_BASE + '?v=bookmark&user_id={}'.format(user))
+    with open('uid{}.xml'.format(user), 'wb') as f:
+        f.write(r.data)
+    # Parsing xml and tokenize all talks
+    parser = etree.XMLParser(encoding='cp1252', recover=True)
+    tree = etree.parse('uid{}.xml'.format(user), parser=parser)
+    root = tree.getroot()
+    tokens = []
+    for item in root.findall('./channel/item'):
+        for child in item:
+            if child.tag == 'title':
+                tokens += word_tokenize(child.text)
+            elif child.tag == 'description':
+                tokens += word_tokenize(child.text)
+    tokens = [ps.stem(t.lower()) for t in tokens if t not in stop]
+    if len(tokens) < 1:
+        print("> Data not available for user <{}>! Try another id.".format(user))
+        sys.exit(2)
+        # Calculate the vector for user
+    user_vec = {}
+    for token in tokens:
+        if token in user_vec:
+            user_vec[token] += 1
+        else:
+            user_vec[token] = 1
+    # Calculate similarity score between user and each talks
+    directory = os.path.dirname(os.path.abspath(__file__))
+    for filename in os.listdir(directory):
+        if filename.endswith('.vec'):
+            with open(os.path.join(directory, filename), 'r', encoding='utf-8') as f:
+                for line in f:
+                    k, v = line.split('\t')
+                    doc_vec = json.loads(v)
+                    print("{0:.5f}".format(
+                        sim_score(user_vec, doc_vec, algo)), k)
 
 
 def main(argv):
@@ -214,6 +310,8 @@ def main(argv):
             REC_START_DATE = arg
         elif opt in ('-e', '--end'):
             REC_END_DATE = arg
+
+    # TODO: start time and end time currently not used
 
     # Start processing request
     if op == -1:
