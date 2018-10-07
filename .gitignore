@@ -129,4 +129,5 @@ dmypy.json
 .vscode/*
 
 # Misc.
-data/*.xml
+**/*.xml
+**/*.vec
