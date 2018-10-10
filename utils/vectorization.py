@@ -26,9 +26,8 @@ def vectorize(docs, algo='tf-idf'):
     vectors = {}
     idf = {}
     # Count tf and idf for each doc
-    for doc in docs:
-        tokens = word_tokenize(doc['title']) + \
-            word_tokenize(doc['description'])
+    for uid, text in docs.items():
+        tokens = word_tokenize(text)
         tokens = [ps.stem(t.lower()) for t in tokens if t not in stop]
         count = {}
         for token in tokens:
@@ -36,7 +35,7 @@ def vectorize(docs, algo='tf-idf'):
                 count[token] += 1
             else:
                 count[token] = 1
-        vectors[doc['id']] = count
+        vectors[uid] = count
         for k in count.keys():
             if k in idf:
                 idf[k] += 1
@@ -47,9 +46,9 @@ def vectorize(docs, algo='tf-idf'):
         return vectors
     elif algo == 'tf-idf':
         # Count document frequency
-        for docid in vectors.keys():
-            for token in vectors[docid].keys():
-                vectors[docid][token] = vectors[docid][token] / \
+        for uid in vectors.keys():
+            for token in vectors[uid].keys():
+                vectors[uid][token] = vectors[uid][token] / \
                     (idf[token] if token in idf else 1)
         return vectors
     else:
